@@ -9,9 +9,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from langchain.chains.retrieval_qa.base import RetrievalQA
+from langchain_core.prompts import ChatPromptTemplate
 
-# Load the GROQ_API_KEY from the .env file
+# Load the GROQ_API_KEY from the .env file (used when running locally)
 load_dotenv()
 
 # ---------- Page setup ----------
@@ -46,7 +46,7 @@ def build_retriever(file_bytes, file_name):
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    # 5. STORE: put the vectors in an in-memory Chroma database
+    # 5. STORE: put the vectors in a FAISS index (fast in-memory similarity search)
     vector_store = FAISS.from_documents(chunks, embeddings)
 
     os.remove(tmp_path)  # clean up the temp file
@@ -55,19 +55,47 @@ def build_retriever(file_bytes, file_name):
     return vector_store.as_retriever(search_kwargs={"k": 4})
 
 
-# ---------- Build the question-answering chain ----------
-def build_qa_chain(retriever):
+# ---------- The LLM ----------
+@st.cache_resource
+def get_llm():
     # The LLM, accessed for free via Groq
-    llm = ChatGroq(
+    return ChatGroq(
         model="llama-3.1-8b-instant",
         temperature=0,  # 0 = factual, less made-up
     )
-    # RetrievalQA ties retrieval + the LLM together
-    return RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=retriever,
-        return_source_documents=True,
-    )
+
+
+# ---------- The prompt template ----------
+# We tell the model to answer ONLY from the provided context.
+PROMPT = ChatPromptTemplate.from_template(
+    """You are a helpful assistant. Answer the question using ONLY the context below.
+If the answer is not in the context, say you don't know.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+)
+
+
+# ---------- The answer function (replaces RetrievalQA) ----------
+# This does manually what the old chain did: retrieve chunks, stuff them into
+# the prompt, and call the LLM. Easy to read and explain.
+def answer_question(retriever, llm, question):
+    # 1. RETRIEVE the most relevant chunks for this question
+    docs = retriever.invoke(question)
+
+    # 2. Join the chunk texts into one context string
+    context = "\n\n".join(doc.page_content for doc in docs)
+
+    # 3. Fill the prompt and call the LLM
+    messages = PROMPT.format_messages(context=context, question=question)
+    response = llm.invoke(messages)
+
+    # Return both the answer text and the source chunks
+    return response.content, docs
 
 
 # ---------- The app flow ----------
@@ -76,7 +104,7 @@ uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 if uploaded_file is not None:
     # Build the retriever (cached, so only runs once for this file)
     retriever = build_retriever(uploaded_file.getvalue(), uploaded_file.name)
-    qa_chain = build_qa_chain(retriever)
+    llm = get_llm()
 
     st.success(f"Ready! Ask anything about '{uploaded_file.name}'.")
 
@@ -84,15 +112,15 @@ if uploaded_file is not None:
 
     if question:
         with st.spinner("Thinking..."):
-            result = qa_chain.invoke({"query": question})
+            answer, source_docs = answer_question(retriever, llm, question)
 
         # Show the answer
         st.markdown("### Answer")
-        st.write(result["result"])
+        st.write(answer)
 
         # Show which parts of the PDF the answer came from
         with st.expander("Sources (passages used to answer)"):
-            for i, doc in enumerate(result["source_documents"], start=1):
+            for i, doc in enumerate(source_docs, start=1):
                 page = doc.metadata.get("page", "?")
                 st.markdown(f"**Source {i} (page {page}):**")
                 st.write(doc.page_content[:300] + "...")
