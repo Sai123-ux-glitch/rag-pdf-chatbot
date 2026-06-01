@@ -58,10 +58,19 @@ def build_retriever(file_bytes, file_name):
 # ---------- The LLM ----------
 @st.cache_resource
 def get_llm():
-    # The LLM, accessed for free via Groq
+    key = None
+    try:
+        key = st.secrets["GROQ_API_KEY"]
+    except Exception:
+        key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        st.error("No GROQ_API_KEY found in secrets or environment.")
+        st.stop()
+    st.caption(f"Key loaded: starts {key[:6]!r}, ends {key[-4:]!r}, length {len(key)}")
     return ChatGroq(
         model="llama-3.1-8b-instant",
-        temperature=0,  # 0 = factual, less made-up
+        temperature=0,
+        api_key=key,
     )
 
 
