@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain.chains import RetrievalQA
 
@@ -47,7 +47,7 @@ def build_retriever(file_bytes, file_name):
     )
 
     # 5. STORE: put the vectors in an in-memory Chroma database
-    vector_store = Chroma.from_documents(chunks, embeddings)
+    vector_store = FAISS.from_documents(chunks, embeddings)
 
     os.remove(tmp_path)  # clean up the temp file
 
