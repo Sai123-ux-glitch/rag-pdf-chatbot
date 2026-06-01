@@ -66,7 +66,6 @@ def get_llm():
     if not key:
         st.error("No GROQ_API_KEY found in secrets or environment.")
         st.stop()
-    st.caption(f"Key loaded: starts {key[:6]!r}, ends {key[-4:]!r}, length {len(key)}")
     return ChatGroq(
         model="llama-3.1-8b-instant",
         temperature=0,
